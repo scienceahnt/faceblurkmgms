@@ -86,7 +86,7 @@
   .item .hint { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
   .item .hint b { color: var(--accent); }
   .canvas-box { background: #000; border-radius: 10px; overflow: hidden; line-height: 0; }
-  .canvas-box canvas { width: 100%; height: auto; display: block; }
+  .canvas-box canvas { width: 100%; height: auto; display: block; touch-action: none; user-select: none; -webkit-user-select: none; }
   .item .actions { margin-top: 12px; display: flex; gap: 10px; }
   .btn {
     padding: 10px 16px; border-radius: 10px; cursor: pointer; font-size: 13px;
@@ -108,7 +108,7 @@
   <header>
     <div class="badge">PRIVACY • 학생 얼굴 보호</div>
     <h1>얼굴 <span>자동 모자이크</span></h1>
-    <p class="sub">사진을 올리면 얼굴을 자동으로 감지해 가립니다. 모든 처리는 브라우저 안에서만 이루어지고 사진은 어디에도 전송되지 않습니다.</p>
+    <p class="sub">사진을 올리면 얼굴을 자동으로 가립니다. 자동으로 못 잡은 부분은 사진 위에서 직접 드래그해 가릴 수 있어요. 모든 처리는 브라우저 안에서만 이루어지고 사진은 어디에도 전송되지 않습니다.</p>
   </header>
 
   <div class="controls">
@@ -298,8 +298,8 @@ function renderItem(entry, idx){
   const count = entry.detections.length;
   div.innerHTML = `
     <div class="name"><span>${entry.name}</span>
-      <em>${count>0 ? '얼굴 '+count+'개 감지' : '⚠ 얼굴 미감지 — 직접 드래그하세요'}</em></div>
-    <div class="hint">놓친 얼굴이 있으면 사진 위에서 <b>마우스로 드래그</b>해 직접 가릴 수 있습니다.</div>
+      <em>${count>0 ? '얼굴 '+count+'개 자동 감지됨' : '자동 감지 안 됨 — 직접 선택하세요'}</em></div>
+    <div class="hint">가릴 부분을 사진 위에서 <b>마우스로 드래그</b>하세요. 여러 번 그려 여러 명을 가릴 수 있고, 자동 감지된 얼굴과 함께 처리됩니다.</div>
     <div class="canvas-box"></div>
     <div class="actions">
       <button class="btn primary" data-dl="${idx}">이 사진 다운로드</button>
@@ -320,45 +320,57 @@ function renderItem(entry, idx){
 // 캔버스 위에서 직접 영역을 드래그해 추가
 function enableDrawing(entry, canvas){
   let drawing = false, sx=0, sy=0;
-  // 화면 좌표 → 원본 이미지 좌표 변환 비율
-  const scale = () => canvas.width / canvas.getBoundingClientRect().width;
 
-  const getPos = e => {
+  const getPos = (clientX, clientY) => {
     const r = canvas.getBoundingClientRect();
-    const p = e.touches ? e.touches[0] : e;
-    const s = scale();
-    return { x: (p.clientX - r.left) * s, y: (p.clientY - r.top) * s };
+    const sxR = canvas.width / r.width;
+    const syR = canvas.height / r.height;
+    return { x: (clientX - r.left) * sxR, y: (clientY - r.top) * syR };
   };
 
-  const start = e => { e.preventDefault(); drawing=true; const p=getPos(e); sx=p.x; sy=p.y; };
-  const move = e => {
+  const start = (clientX, clientY) => {
+    drawing = true;
+    const p = getPos(clientX, clientY);
+    sx = p.x; sy = p.y;
+  };
+  const move = (clientX, clientY) => {
     if(!drawing) return;
-    e.preventDefault();
-    const p = getPos(e);
-    applyMask(entry); // 베이스 다시 그리고
-    const ctx = canvas.getContext('2d'); // 선택 박스 미리보기
+    const p = getPos(clientX, clientY);
+    applyMask(entry);
+    const ctx = canvas.getContext('2d');
     ctx.save();
-    ctx.strokeStyle = '#4fd1c5'; ctx.lineWidth = Math.max(2, canvas.width/300);
-    ctx.setLineDash([8,6]);
+    ctx.strokeStyle = '#4fd1c5';
+    ctx.lineWidth = Math.max(2, canvas.width/300);
+    ctx.setLineDash([10,7]);
     ctx.strokeRect(sx, sy, p.x-sx, p.y-sy);
     ctx.restore();
   };
-  const end = e => {
+  const end = (clientX, clientY) => {
     if(!drawing) return;
-    drawing=false;
-    const p = getPos(e.changedTouches ? {touches:e.changedTouches} : e);
+    drawing = false;
+    const p = getPos(clientX, clientY);
     const x=Math.min(sx,p.x), y=Math.min(sy,p.y);
     const w=Math.abs(p.x-sx), h=Math.abs(p.y-sy);
     if(w>6 && h>6){ entry.manual.push({x,y,w,h}); }
     applyMask(entry);
   };
 
-  canvas.addEventListener('mousedown', start);
-  canvas.addEventListener('mousemove', move);
-  window.addEventListener('mouseup', end);
-  canvas.addEventListener('touchstart', start, {passive:false});
-  canvas.addEventListener('touchmove', move, {passive:false});
-  canvas.addEventListener('touchend', end);
+  // 마우스
+  canvas.addEventListener('mousedown', e=>{ e.preventDefault(); start(e.clientX, e.clientY); });
+  document.addEventListener('mousemove', e=>{ if(drawing) move(e.clientX, e.clientY); });
+  document.addEventListener('mouseup', e=>{ if(drawing) end(e.clientX, e.clientY); });
+
+  // 터치
+  canvas.addEventListener('touchstart', e=>{
+    e.preventDefault(); const t=e.touches[0]; start(t.clientX, t.clientY);
+  }, {passive:false});
+  canvas.addEventListener('touchmove', e=>{
+    e.preventDefault(); if(!drawing) return; const t=e.touches[0]; move(t.clientX, t.clientY);
+  }, {passive:false});
+  canvas.addEventListener('touchend', e=>{
+    e.preventDefault(); const t=e.changedTouches[0]; end(t.clientX, t.clientY);
+  }, {passive:false});
+
   canvas.style.cursor = 'crosshair';
 }
 
